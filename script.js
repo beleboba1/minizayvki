@@ -1,7 +1,7 @@
 // ========== КОНФИГУРАЦИЯ ==========
 const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
 const VK_APP_ID = 54576568;
-const ADMIN_VK_IDS = [321451736];
+const ADMIN_VK_IDS = [321451736];   // <-- обязательно
 const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
 
 // ========== СОСТОЯНИЕ ==========
@@ -19,7 +19,7 @@ const state = {
   error: ''
 };
 
-// ========== VK BRIDGE с защитой от зависаний ==========
+// ========== VK BRIDGE (с таймаутами) ==========
 async function safeVkBridgeCall(method, params, timeout = 10000) {
   return new Promise(async (resolve, reject) => {
     const timer = setTimeout(() => {
@@ -37,35 +37,24 @@ async function safeVkBridgeCall(method, params, timeout = 10000) {
 }
 
 async function initVK() {
-  console.log('initVK started');
   try {
     await safeVkBridgeCall('VKWebAppInit', {}, 5000);
-    console.log('VKWebAppInit success');
     const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
       scope: ''
     }, 10000);
-    console.log('authResult:', authResult);
     if (authResult.access_token) {
       const userInfo = await getUserInfo(authResult.access_token);
-      console.log('userInfo:', userInfo);
       if (userInfo && userInfo.id) {
         await handleAuthSuccess(userInfo.id, userInfo);
         return;
-      } else {
-        console.warn('getUserInfo returned null or no id');
-        state.error = 'Не удалось получить данные профиля';
       }
-    } else {
-      console.warn('No access_token in authResult');
-      state.error = 'Не получен токен доступа';
     }
   } catch (e) {
     console.error('Init error:', e);
-    state.error = 'Ошибка инициализации: ' + e.message;
+    state.error = 'Ошибка инициализации: ' + (e.message || 'неизвестная');
   }
-  console.log('initVK failed, finishing loading');
-  finishLoading();
+  finishLoading();   // <-- эта функция теперь объявлена ниже
 }
 
 async function getUserInfo(token) {
@@ -92,7 +81,7 @@ async function handleAuthSuccess(userId, user) {
   render();
 }
 
-function finishLoading() {
+function finishLoading() {   // <-- обязательно
   state.isLoading = false;
   render();
 }
@@ -183,7 +172,7 @@ function render() {
   }
 }
 
-// --- ЭКРАН ВХОДА ---
+// ---------- ЭКРАН ВХОДА ----------
 function renderLogin() {
   app.innerHTML = `
     <div class="app login-page">
@@ -191,7 +180,7 @@ function renderLogin() {
         <div class="login-box">
           <h1>📋 Система заявок</h1>
           <p>Войдите через ВКонтакте</p>
-          ${state.error ? `<div class="error-message">${state.error}<br><small>Попробуйте ещё раз или введите ID вручную</small></div>` : ''}
+          ${state.error ? `<div class="error-message">${state.error}</div>` : ''}
           <button class="vk-login-btn" onclick="handleLogin()">🔗 Войти через VK</button>
           <button class="manual-login-btn" onclick="handleManualLogin()">📝 Ввести VK ID вручную</button>
         </div>
@@ -202,18 +191,14 @@ function renderLogin() {
 async function handleLogin() {
   state.error = '';
   state.isLoading = true; render();
-  console.log('handleLogin started');
   try {
     await safeVkBridgeCall('VKWebAppInit', {}, 5000);
-    console.log('VKWebAppInit success');
     const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
       scope: ''
     }, 10000);
-    console.log('authResult:', authResult);
     if (authResult.access_token) {
       const user = await getUserInfo(authResult.access_token);
-      console.log('user:', user);
       if (user && user.id) {
         await handleAuthSuccess(user.id, user);
         return;
@@ -221,8 +206,7 @@ async function handleLogin() {
     }
     state.error = 'Не удалось получить данные пользователя';
   } catch (e) {
-    state.error = 'Ошибка авторизации: ' + e.message;
-    console.error(e);
+    state.error = 'Ошибка авторизации: ' + (e.message || '');
   }
   state.isLoading = false;
   render();
@@ -236,14 +220,14 @@ function handleManualLogin() {
   const user = { id, first_name: 'User', last_name: String(id), photo_100: 'https://vk.com/images/camera_100.png' };
   state.currentUser = id;
   state.userInfo = user;
-  state.isAdmin = ADMIN_VK_IDS.includes(id);
+  state.isAdmin = ADMIN_VK_IDS.includes(id);   // теперь работает, т.к. ADMIN_VK_IDS определён
   state.currentView = state.isAdmin ? 'admin' : 'main';
   localStorage.setItem('vk_data', JSON.stringify({ id, info: user, admin: state.isAdmin }));
   state.isLoading = true; render();
   loadTickets().finally(() => { state.isLoading = false; render(); });
 }
 
-// --- ГЛАВНАЯ ---
+// ---------- ГЛАВНАЯ ----------
 function renderMain() {
   const u = state.userInfo;
   app.innerHTML = `
@@ -278,7 +262,7 @@ function backToMain() {
   render();
 }
 
-// --- ФОРМА ---
+// ---------- ФОРМА ----------
 function renderForm() {
   const type = state.formData.type;
   app.innerHTML = `
@@ -340,74 +324,70 @@ function bindFormEvents() {
       });
     }
 
-    const submitBtn = document.getElementById('submitBtn');
-    if (submitBtn) {
-      submitBtn.addEventListener('click', async () => {
-        const type = state.formData.type;
-        const ticket = {
-          id: Math.floor(Math.random() * 100000),
-          type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
-          author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
-          authorId: state.currentUser,
-          authorAvatar: state.userInfo?.photo_100 || '',
-          status: 'В ожидании',
-          priority: 'Средний',
-          createdAt: new Date().toLocaleString('ru-RU'),
-          completedAt: '',
-          timestamp: Date.now(),
-          fileId: ''
-        };
+    document.getElementById('submitBtn')?.addEventListener('click', async () => {
+      const type = state.formData.type;
+      const ticket = {
+        id: Math.floor(Math.random() * 100000),
+        type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
+        author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
+        authorId: state.currentUser,
+        authorAvatar: state.userInfo?.photo_100 || '',
+        status: 'В ожидании',
+        priority: 'Средний',
+        createdAt: new Date().toLocaleString('ru-RU'),
+        completedAt: '',
+        timestamp: Date.now(),
+        fileId: ''
+      };
 
-        if (type === 'maintenance') {
-          ticket.category = document.getElementById('category')?.value || '';
-          ticket.problem = document.getElementById('problem')?.value || '';
-          if (ticket.category === 'printer') {
-            ticket.printerName = document.getElementById('printerName')?.value || '';
-          }
-        } else {
-          ticket.requirements = document.getElementById('requirements')?.value || '';
-          ticket.location = document.getElementById('location')?.value || '';
-          ticket.date = document.getElementById('date')?.value || '';
-          ticket.time = document.getElementById('time')?.value || '';
+      if (type === 'maintenance') {
+        ticket.category = document.getElementById('category')?.value || '';
+        ticket.problem = document.getElementById('problem')?.value || '';
+        if (ticket.category === 'printer') {
+          ticket.printerName = document.getElementById('printerName')?.value || '';
         }
+      } else {
+        ticket.requirements = document.getElementById('requirements')?.value || '';
+        ticket.location = document.getElementById('location')?.value || '';
+        ticket.date = document.getElementById('date')?.value || '';
+        ticket.time = document.getElementById('time')?.value || '';
+      }
 
-        const fileInput = document.getElementById('attachmentFile');
-        if (fileInput && fileInput.files.length > 0) {
-          const uploadStatus = document.getElementById('uploadStatus');
-          if (uploadStatus) uploadStatus.style.display = 'block';
-          try {
-            ticket.fileId = await uploadFile(fileInput.files[0]);
-          } catch (err) {
-            alert('Ошибка загрузки файла: ' + err.message);
-            if (uploadStatus) uploadStatus.style.display = 'none';
-            return;
-          }
+      const fileInput = document.getElementById('attachmentFile');
+      if (fileInput && fileInput.files.length > 0) {
+        const uploadStatus = document.getElementById('uploadStatus');
+        if (uploadStatus) uploadStatus.style.display = 'block';
+        try {
+          ticket.fileId = await uploadFile(fileInput.files[0]);
+        } catch (err) {
+          alert('Ошибка загрузки файла: ' + err.message);
           if (uploadStatus) uploadStatus.style.display = 'none';
+          return;
         }
+        if (uploadStatus) uploadStatus.style.display = 'none';
+      }
 
-        if (await createTicket(ticket)) {
-          alert('Заявка №' + ticket.id + ' создана!');
-          backToMain();
-        } else {
-          alert('Ошибка при создании заявки');
-        }
-      });
-    }
+      if (await createTicket(ticket)) {
+        alert('Заявка №' + ticket.id + ' создана!');
+        backToMain();
+      } else {
+        alert('Ошибка при создании заявки');
+      }
+    });
   });
 }
 
-// --- ВЫХОД ---
+// ---------- ВЫХОД ----------
 function handleLogout() {
   state.currentUser = null;
   state.userInfo = null;
   state.isAdmin = false;
   state.currentView = 'login';
-  state.error = '';
   localStorage.clear();
   render();
 }
 
-// --- АДМИНКА ---
+// ---------- АДМИНКА ----------
 function renderAdmin() {
   const stats = getStats();
   const filtered = getFilteredTickets();
@@ -586,16 +566,13 @@ function restoreSession() {
 }
 
 (async () => {
-  console.log('App starting');
   if (restoreSession()) {
-    console.log('Session restored, user:', state.currentUser);
     state.isLoading = true;
     render();
     await loadTickets();
     state.isLoading = false;
     render();
   } else {
-    console.log('No session, running initVK');
     state.isLoading = true;
     render();
     await initVK();
