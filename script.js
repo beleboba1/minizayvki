@@ -1,8 +1,8 @@
 // ========== КОНФИГУРАЦИЯ ==========
 const VK_APP_ID = 54576568; // ваш VK App ID
 const ADMIN_VK_IDS = [321451736]; // ID администраторов
-const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec'; // замените
-const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L'; // опционально, для загрузки файлов
+const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
+const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
 
 // ========== СОСТОЯНИЕ ==========
 const state = {
@@ -23,7 +23,10 @@ const state = {
 async function initVK() {
   try {
     await vkBridge.send('VKWebAppInit');
-    const authResult = await vkBridge.send('VKWebAppGetAuthToken');
+    const authResult = await vkBridge.send('VKWebAppGetAuthToken', {
+      app_id: VK_APP_ID,
+      scope: 'friends,photos'
+    });
     if (authResult.access_token) {
       const userInfo = await getUserInfo(authResult.access_token);
       if (userInfo && userInfo.id) {
@@ -175,7 +178,10 @@ async function handleLogin() {
   state.isLoading = true; render();
   try {
     await vkBridge.send('VKWebAppInit');
-    const authResult = await vkBridge.send('VKWebAppGetAuthToken');
+    const authResult = await vkBridge.send('VKWebAppGetAuthToken', {
+      app_id: VK_APP_ID,
+      scope: 'friends,photos'
+    });
     if (authResult.access_token) {
       const user = await getUserInfo(authResult.access_token);
       if (user && user.id) {
@@ -254,7 +260,7 @@ function renderForm() {
         ${type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
       </div>
     </div>`;
-  bindFormEvents(); // важный вызов
+  bindFormEvents();
 }
 
 function maintenanceFormHTML() {
@@ -294,65 +300,68 @@ function supportFormHTML() {
 }
 
 function bindFormEvents() {
-  const catSelect = document.getElementById('category');
-  if (catSelect) {
-    catSelect.addEventListener('change', (e) => {
-      const block = document.getElementById('printerNameBlock');
-      if (block) block.style.display = e.target.value === 'printer' ? 'block' : 'none';
-    });
-  }
-
-  document.getElementById('submitBtn')?.addEventListener('click', async () => {
-    const type = state.formData.type;
-    const ticket = {
-      id: Math.floor(Math.random() * 100000),
-      type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
-      author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
-      authorId: state.currentUser,
-      authorAvatar: state.userInfo?.photo_100 || '',
-      status: 'В ожидании',
-      priority: 'Средний',
-      createdAt: new Date().toLocaleString('ru-RU'),
-      completedAt: '',
-      timestamp: Date.now(),
-      fileId: ''
-    };
-
-    // Сбор данных формы
-    if (type === 'maintenance') {
-      ticket.category = document.getElementById('category')?.value || '';
-      ticket.problem = document.getElementById('problem')?.value || '';
-      if (ticket.category === 'printer') {
-        ticket.printerName = document.getElementById('printerName')?.value || '';
-      }
-    } else {
-      ticket.requirements = document.getElementById('requirements')?.value || '';
-      ticket.location = document.getElementById('location')?.value || '';
-      ticket.date = document.getElementById('date')?.value || '';
-      ticket.time = document.getElementById('time')?.value || '';
+  // Небольшая задержка, чтобы DOM точно обновился
+  requestAnimationFrame(() => {
+    const catSelect = document.getElementById('category');
+    if (catSelect) {
+      catSelect.addEventListener('change', (e) => {
+        const block = document.getElementById('printerNameBlock');
+        if (block) block.style.display = e.target.value === 'printer' ? 'block' : 'none';
+      });
     }
 
-    // Если выбран файл – загружаем сначала его
-    const fileInput = document.getElementById('attachmentFile');
-    if (fileInput && fileInput.files.length > 0) {
-      const uploadStatus = document.getElementById('uploadStatus');
-      if (uploadStatus) uploadStatus.style.display = 'block';
-      try {
-        ticket.fileId = await uploadFile(fileInput.files[0]);
-      } catch (err) {
-        alert('Ошибка загрузки файла: ' + err.message);
+    document.getElementById('submitBtn')?.addEventListener('click', async () => {
+      const type = state.formData.type;
+      const ticket = {
+        id: Math.floor(Math.random() * 100000),
+        type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
+        author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
+        authorId: state.currentUser,
+        authorAvatar: state.userInfo?.photo_100 || '',
+        status: 'В ожидании',
+        priority: 'Средний',
+        createdAt: new Date().toLocaleString('ru-RU'),
+        completedAt: '',
+        timestamp: Date.now(),
+        fileId: ''
+      };
+
+      // Сбор данных формы
+      if (type === 'maintenance') {
+        ticket.category = document.getElementById('category')?.value || '';
+        ticket.problem = document.getElementById('problem')?.value || '';
+        if (ticket.category === 'printer') {
+          ticket.printerName = document.getElementById('printerName')?.value || '';
+        }
+      } else {
+        ticket.requirements = document.getElementById('requirements')?.value || '';
+        ticket.location = document.getElementById('location')?.value || '';
+        ticket.date = document.getElementById('date')?.value || '';
+        ticket.time = document.getElementById('time')?.value || '';
+      }
+
+      // Если выбран файл – загружаем сначала его
+      const fileInput = document.getElementById('attachmentFile');
+      if (fileInput && fileInput.files.length > 0) {
+        const uploadStatus = document.getElementById('uploadStatus');
+        if (uploadStatus) uploadStatus.style.display = 'block';
+        try {
+          ticket.fileId = await uploadFile(fileInput.files[0]);
+        } catch (err) {
+          alert('Ошибка загрузки файла: ' + err.message);
+          if (uploadStatus) uploadStatus.style.display = 'none';
+          return;
+        }
         if (uploadStatus) uploadStatus.style.display = 'none';
-        return;
       }
-      if (uploadStatus) uploadStatus.style.display = 'none';
-    }
 
-    if (await createTicket(ticket)) {
-      alert('Заявка №' + ticket.id + ' создана!');
-      backToMain();
-    } else {
-      alert('Ошибка при создании заявки');
-    }
+      if (await createTicket(ticket)) {
+        alert('Заявка №' + ticket.id + ' создана!');
+        backToMain();
+      } else {
+        alert('Ошибка при создании заявки');
+      }
+    });
   });
 }
 
@@ -366,7 +375,7 @@ function handleLogout() {
   render();
 }
 
-// ---------- АДМИНКА (упрощённо) ----------
+// ---------- АДМИНКА ----------
 function renderAdmin() {
   const stats = getStats();
   const filtered = getFilteredTickets();
