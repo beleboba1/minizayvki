@@ -1,8 +1,8 @@
 // ========== КОНФИГУРАЦИЯ ==========
-const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
-const VK_APP_ID = 54576568;
-const ADMIN_VK_IDS = [321451736];   // <-- обязательно
-const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
+const API_URL = window.API_URL || 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
+const VK_APP_ID = window.VK_APP_ID || 54576568;
+const ADMIN_VK_IDS = window.ADMIN_VK_IDS || [321451736];
+const DRIVE_FOLDER_ID = window.DRIVE_FOLDER_ID || '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
 
 // ========== СОСТОЯНИЕ ==========
 const state = {
@@ -54,7 +54,7 @@ async function initVK() {
     console.error('Init error:', e);
     state.error = 'Ошибка инициализации: ' + (e.message || 'неизвестная');
   }
-  finishLoading();   // <-- эта функция теперь объявлена ниже
+  finishLoading();
 }
 
 async function getUserInfo(token) {
@@ -81,7 +81,7 @@ async function handleAuthSuccess(userId, user) {
   render();
 }
 
-function finishLoading() {   // <-- обязательно
+function finishLoading() {
   state.isLoading = false;
   render();
 }
@@ -220,7 +220,7 @@ function handleManualLogin() {
   const user = { id, first_name: 'User', last_name: String(id), photo_100: 'https://vk.com/images/camera_100.png' };
   state.currentUser = id;
   state.userInfo = user;
-  state.isAdmin = ADMIN_VK_IDS.includes(id);   // теперь работает, т.к. ADMIN_VK_IDS определён
+  state.isAdmin = ADMIN_VK_IDS.includes(id);
   state.currentView = state.isAdmin ? 'admin' : 'main';
   localStorage.setItem('vk_data', JSON.stringify({ id, info: user, admin: state.isAdmin }));
   state.isLoading = true; render();
@@ -235,7 +235,7 @@ function renderMain() {
       <header class="header">
         <h1>📋 Заявки</h1>
         <div class="user-info">
-          ${u ? `<img src="${u.photo_100}" class="user-avatar">` : ''}
+          ${u && u.photo_100 ? `<img src="${u.photo_100}" class="user-avatar">` : ''}
           <span>${u ? u.first_name + ' ' + u.last_name : ''}</span>
           <button class="logout-btn" onclick="handleLogout()">Выход</button>
         </div>
@@ -396,7 +396,7 @@ function renderAdmin() {
       <header class="header">
         <h1>👨‍💼 Админ панель</h1>
         <div class="user-info">
-          ${state.userInfo ? `<img src="${state.userInfo.photo_100}" class="user-avatar"><span>${state.userInfo.first_name}</span>` : ''}
+          ${state.userInfo && state.userInfo.photo_100 ? `<img src="${state.userInfo.photo_100}" class="user-avatar"><span>${state.userInfo.first_name || ''}</span>` : ''}
           <button class="logout-btn" onclick="handleLogout()">Выход</button>
         </div>
       </header>
@@ -491,9 +491,14 @@ function renderTicketDetail() {
       <div class="ticket-detail">
         <div class="ticket-info">
           <h2>${t.type}</h2>
-          <p><strong>От:</strong> ${t.author}</p>
+          <div class="user-card">
+            ${t.authorAvatar ? `<img src="${t.authorAvatar}" alt="user">` : ''}
+            <p><strong>От:</strong> ${t.author}</p>
+          </div>
           <p><strong>Статус:</strong> ${t.status}</p>
           <p><strong>Приоритет:</strong> ${t.priority}</p>
+          <p><strong>Создана:</strong> ${t.createdAt}</p>
+          ${t.completedAt ? `<p><strong>Выполнена:</strong> ${t.completedAt}</p>` : ''}
           ${fileLink}
           <div class="update-section">
             <label>Статус:</label>
