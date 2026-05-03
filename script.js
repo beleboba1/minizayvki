@@ -1,8 +1,8 @@
-// ========== КОНФИГУРАЦИЯ (берём из глобальной области) ==========
-const API_URL = window.API_URL;
-const VK_APP_ID = window.VK_APP_ID;
-const ADMIN_VK_IDS = window.ADMIN_VK_IDS;
-const DRIVE_FOLDER_ID = window.DRIVE_FOLDER_ID;
+// ========== КОНФИГУРАЦИЯ ==========
+const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
+const VK_APP_ID = 54576568;
+const ADMIN_VK_IDS = [321451736];
+const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
 
 // ========== СОСТОЯНИЕ ==========
 const state = {
@@ -11,7 +11,7 @@ const state = {
   isAdmin: false,
   isLoading: true,
   tickets: [],
-  currentView: 'login',   // 'login', 'main', 'form', 'admin'
+  currentView: 'login',
   formData: { type: '', category: '', problem: '', printerName: '', requirements: '', location: '', date: '', time: '' },
   adminFilters: { searchQuery: '', type: '', status: '', priority: '' },
   activeTab: 'all',
@@ -19,7 +19,7 @@ const state = {
   error: ''
 };
 
-// ========== VK BRIDGE (с защитой от зависаний) ==========
+// ========== VK BRIDGE с защитой от зависаний ==========
 async function safeVkBridgeCall(method, params, timeout = 10000) {
   return new Promise(async (resolve, reject) => {
     const timer = setTimeout(() => {
@@ -37,23 +37,34 @@ async function safeVkBridgeCall(method, params, timeout = 10000) {
 }
 
 async function initVK() {
+  console.log('initVK started');
   try {
     await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    console.log('VKWebAppInit success');
     const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
-      scope: ''  // оставляем пустую строку, чтобы не запрашивать лишних разрешений
+      scope: ''
     }, 10000);
+    console.log('authResult:', authResult);
     if (authResult.access_token) {
       const userInfo = await getUserInfo(authResult.access_token);
+      console.log('userInfo:', userInfo);
       if (userInfo && userInfo.id) {
         await handleAuthSuccess(userInfo.id, userInfo);
         return;
+      } else {
+        console.warn('getUserInfo returned null or no id');
+        state.error = 'Не удалось получить данные профиля';
       }
+    } else {
+      console.warn('No access_token in authResult');
+      state.error = 'Не получен токен доступа';
     }
   } catch (e) {
     console.error('Init error:', e);
     state.error = 'Ошибка инициализации: ' + e.message;
   }
+  console.log('initVK failed, finishing loading');
   finishLoading();
 }
 
@@ -70,30 +81,21 @@ async function getUserInfo(token) {
   return null;
 }
 
-async function handleLogin() {
-  state.error = '';
-  state.isLoading = true; render();
-  try {
-    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
-    const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
-      app_id: VK_APP_ID,
-      scope: ''
-    }, 10000);
-    if (authResult.access_token) {
-      const user = await getUserInfo(authResult.access_token);
-      if (user && user.id) {
-        await handleAuthSuccess(user.id, user);
-        return;
-      }
-    }
-    state.error = 'Не удалось получить данные пользователя';
-  } catch (e) {
-    state.error = 'Ошибка авторизации: ' + e.message;
-  }
-  state.isLoading = false;
+async function handleAuthSuccess(userId, user) {
+  state.currentUser = userId;
+  state.userInfo = user;
+  state.isAdmin = ADMIN_VK_IDS.includes(userId);
+  state.currentView = state.isAdmin ? 'admin' : 'main';
+  localStorage.setItem('vk_data', JSON.stringify({ id: userId, info: user, admin: state.isAdmin }));
+  await loadTickets();
+  finishLoading();
   render();
 }
 
+function finishLoading() {
+  state.isLoading = false;
+  render();
+}
 
 // ========== API (Google Sheets) ==========
 async function loadTickets() {
@@ -189,7 +191,7 @@ function renderLogin() {
         <div class="login-box">
           <h1>📋 Система заявок</h1>
           <p>Войдите через ВКонтакте</p>
-          ${state.error ? `<div class="error-message">${state.error}</div>` : ''}
+          ${state.error ? `<div class="error-message">${state.error}<br><small>Попробуйте ещё раз или введите ID вручную</small></div>` : ''}
           <button class="vk-login-btn" onclick="handleLogin()">🔗 Войти через VK</button>
           <button class="manual-login-btn" onclick="handleManualLogin()">📝 Ввести VK ID вручную</button>
         </div>
@@ -200,22 +202,27 @@ function renderLogin() {
 async function handleLogin() {
   state.error = '';
   state.isLoading = true; render();
+  console.log('handleLogin started');
   try {
-    await vkBridge.send('VKWebAppInit');
-    const authResult = await vkBridge.send('VKWebAppGetAuthToken', {
+    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    console.log('VKWebAppInit success');
+    const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
-      scope: 'friends,photos'
-    });
+      scope: ''
+    }, 10000);
+    console.log('authResult:', authResult);
     if (authResult.access_token) {
       const user = await getUserInfo(authResult.access_token);
+      console.log('user:', user);
       if (user && user.id) {
         await handleAuthSuccess(user.id, user);
         return;
       }
     }
-    state.error = 'Не удалось авторизоваться';
+    state.error = 'Не удалось получить данные пользователя';
   } catch (e) {
-    state.error = 'Ошибка авторизации';
+    state.error = 'Ошибка авторизации: ' + e.message;
+    console.error(e);
   }
   state.isLoading = false;
   render();
@@ -273,6 +280,7 @@ function backToMain() {
 
 // --- ФОРМА ---
 function renderForm() {
+  const type = state.formData.type;
   app.innerHTML = `
     <div class="app">
       <header class="header">
@@ -280,7 +288,7 @@ function renderForm() {
         <h1>Новая заявка</h1>
       </header>
       <div class="form-container">
-        ${state.formData.type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
+        ${type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
       </div>
     </div>`;
   bindFormEvents();
@@ -332,56 +340,59 @@ function bindFormEvents() {
       });
     }
 
-    document.getElementById('submitBtn')?.addEventListener('click', async () => {
-      const type = state.formData.type;
-      const ticket = {
-        id: Math.floor(Math.random() * 100000),
-        type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
-        author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
-        authorId: state.currentUser,
-        authorAvatar: state.userInfo?.photo_100 || '',
-        status: 'В ожидании',
-        priority: 'Средний',
-        createdAt: new Date().toLocaleString('ru-RU'),
-        completedAt: '',
-        timestamp: Date.now(),
-        fileId: ''
-      };
+    const submitBtn = document.getElementById('submitBtn');
+    if (submitBtn) {
+      submitBtn.addEventListener('click', async () => {
+        const type = state.formData.type;
+        const ticket = {
+          id: Math.floor(Math.random() * 100000),
+          type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
+          author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
+          authorId: state.currentUser,
+          authorAvatar: state.userInfo?.photo_100 || '',
+          status: 'В ожидании',
+          priority: 'Средний',
+          createdAt: new Date().toLocaleString('ru-RU'),
+          completedAt: '',
+          timestamp: Date.now(),
+          fileId: ''
+        };
 
-      if (type === 'maintenance') {
-        ticket.category = document.getElementById('category')?.value || '';
-        ticket.problem = document.getElementById('problem')?.value || '';
-        if (ticket.category === 'printer') {
-          ticket.printerName = document.getElementById('printerName')?.value || '';
+        if (type === 'maintenance') {
+          ticket.category = document.getElementById('category')?.value || '';
+          ticket.problem = document.getElementById('problem')?.value || '';
+          if (ticket.category === 'printer') {
+            ticket.printerName = document.getElementById('printerName')?.value || '';
+          }
+        } else {
+          ticket.requirements = document.getElementById('requirements')?.value || '';
+          ticket.location = document.getElementById('location')?.value || '';
+          ticket.date = document.getElementById('date')?.value || '';
+          ticket.time = document.getElementById('time')?.value || '';
         }
-      } else {
-        ticket.requirements = document.getElementById('requirements')?.value || '';
-        ticket.location = document.getElementById('location')?.value || '';
-        ticket.date = document.getElementById('date')?.value || '';
-        ticket.time = document.getElementById('time')?.value || '';
-      }
 
-      const fileInput = document.getElementById('attachmentFile');
-      if (fileInput && fileInput.files.length > 0) {
-        const uploadStatus = document.getElementById('uploadStatus');
-        if (uploadStatus) uploadStatus.style.display = 'block';
-        try {
-          ticket.fileId = await uploadFile(fileInput.files[0]);
-        } catch (err) {
-          alert('Ошибка загрузки файла: ' + err.message);
+        const fileInput = document.getElementById('attachmentFile');
+        if (fileInput && fileInput.files.length > 0) {
+          const uploadStatus = document.getElementById('uploadStatus');
+          if (uploadStatus) uploadStatus.style.display = 'block';
+          try {
+            ticket.fileId = await uploadFile(fileInput.files[0]);
+          } catch (err) {
+            alert('Ошибка загрузки файла: ' + err.message);
+            if (uploadStatus) uploadStatus.style.display = 'none';
+            return;
+          }
           if (uploadStatus) uploadStatus.style.display = 'none';
-          return;
         }
-        if (uploadStatus) uploadStatus.style.display = 'none';
-      }
 
-      if (await createTicket(ticket)) {
-        alert('Заявка №' + ticket.id + ' создана!');
-        backToMain();
-      } else {
-        alert('Ошибка при создании заявки');
-      }
-    });
+        if (await createTicket(ticket)) {
+          alert('Заявка №' + ticket.id + ' создана!');
+          backToMain();
+        } else {
+          alert('Ошибка при создании заявки');
+        }
+      });
+    }
   });
 }
 
@@ -391,6 +402,7 @@ function handleLogout() {
   state.userInfo = null;
   state.isAdmin = false;
   state.currentView = 'login';
+  state.error = '';
   localStorage.clear();
   render();
 }
@@ -574,13 +586,16 @@ function restoreSession() {
 }
 
 (async () => {
+  console.log('App starting');
   if (restoreSession()) {
+    console.log('Session restored, user:', state.currentUser);
     state.isLoading = true;
     render();
     await loadTickets();
     state.isLoading = false;
     render();
   } else {
+    console.log('No session, running initVK');
     state.isLoading = true;
     render();
     await initVK();
