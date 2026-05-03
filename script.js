@@ -326,11 +326,21 @@ function bindFormEvents() {
 
     document.getElementById('submitBtn')?.addEventListener('click', async () => {
       const type = state.formData.type;
+      const isMaintenance = type === 'maintenance';
+
+      // Собираем все поля единым объектом – так не будет undefined
       const ticket = {
         id: Math.floor(Math.random() * 100000),
-        type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
+        type: isMaintenance ? 'Тех обслуживание' : 'Тех сопровождение',
+        category: isMaintenance ? (document.getElementById('category')?.value || '') : '',
+        problem: isMaintenance ? (document.getElementById('problem')?.value || '') : '',
+        printerName: (isMaintenance && document.getElementById('category')?.value === 'printer') ? (document.getElementById('printerName')?.value || '') : '',
+        requirements: !isMaintenance ? (document.getElementById('requirements')?.value || '') : '',
+        location: !isMaintenance ? (document.getElementById('location')?.value || '') : '',
+        date: !isMaintenance ? (document.getElementById('date')?.value || '') : '',
+        time: !isMaintenance ? (document.getElementById('time')?.value || '') : '',
         author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
-        authorId: state.currentUser,
+        authorId: state.currentUser || '',
         authorAvatar: state.userInfo?.photo_100 || '',
         status: 'В ожидании',
         priority: 'Средний',
@@ -340,19 +350,9 @@ function bindFormEvents() {
         fileId: ''
       };
 
-      if (type === 'maintenance') {
-        ticket.category = document.getElementById('category')?.value || '';
-        ticket.problem = document.getElementById('problem')?.value || '';
-        if (ticket.category === 'printer') {
-          ticket.printerName = document.getElementById('printerName')?.value || '';
-        }
-      } else {
-        ticket.requirements = document.getElementById('requirements')?.value || '';
-        ticket.location = document.getElementById('location')?.value || '';
-        ticket.date = document.getElementById('date')?.value || '';
-        ticket.time = document.getElementById('time')?.value || '';
-      }
+      console.log('Отправляемая заявка:', JSON.stringify(ticket, null, 2)); // временно для отладки
 
+      // Если выбран файл – загружаем сначала его
       const fileInput = document.getElementById('attachmentFile');
       if (fileInput && fileInput.files.length > 0) {
         const uploadStatus = document.getElementById('uploadStatus');
@@ -434,9 +434,9 @@ function renderAdmin() {
             <tbody id="ticketTableBody">
               ${filtered.map(t => `
                 <tr>
-                  <td>${t.id}</td>
-                  <td>${t.author}</td>
-                  <td>${t.type}</td>
+                  <td>${t.id || ''}</td>
+                  <td>${t.author || ''}</td>
+                  <td>${t.type || ''}</td>
                   <td><span class="status ${(t.status || '').toLowerCase().replace(/ /g,'-')}">${t.status || '—'}</span></td>
                   <td><span class="priority ${(t.priority || '').toLowerCase()}">${t.priority || '—'}</span></td>
                   <td>${t.createdAt}</td>
@@ -448,6 +448,12 @@ function renderAdmin() {
       </div>
     </div>`;
   bindAdminEvents();
+  // Восстанавливаем фокус на поле поиска после перерисовки
+  const searchInput = document.getElementById('searchInput');
+  if (searchInput && state.adminFilters.searchQuery) {
+    searchInput.focus();
+    searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+  }
 }
 
 function bindAdminEvents() {
@@ -536,7 +542,7 @@ function closeDetail() {
 function getFilteredTickets() {
   let arr = state.tickets;
   const q = state.adminFilters.searchQuery?.toLowerCase();
-  if (q) arr = arr.filter(t => (t.id+'').includes(q) || t.type.toLowerCase().includes(q) || t.author.toLowerCase().includes(q));
+  if (q) arr = arr.filter(t => (String(t.id||'')).includes(q) || (t.type||'').toLowerCase().includes(q) || (t.author||'').toLowerCase().includes(q));
   if (state.adminFilters.status) arr = arr.filter(t => t.status === state.adminFilters.status);
   if (state.adminFilters.priority) arr = arr.filter(t => t.priority === state.adminFilters.priority);
   if (state.activeTab === 'waiting') arr = arr.filter(t => t.status === 'В ожидании');
@@ -554,7 +560,7 @@ function getStats() {
   };
 }
 
-// ========== СТАРТ ==========
+// ========== СТАРТ (с защитой от зависаний) ==========
 function restoreSession() {
   const saved = localStorage.getItem('vk_data');
   if (saved) {
@@ -574,12 +580,16 @@ function restoreSession() {
   if (restoreSession()) {
     state.isLoading = true;
     render();
-    await loadTickets();
-    state.isLoading = false;
-    render();
+    try {
+      await loadTickets();
+    } catch (e) {
+      console.error('Не удалось загрузить заявки при старте:', e);
+    } finally {
+      finishLoading();
+    }
   } else {
     state.isLoading = true;
     render();
-    await initVK();
+    await initVK(); // там всегда вызывается finishLoading
   }
 })();
