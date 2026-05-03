@@ -1,8 +1,8 @@
-// ========== КОНФИГУРАЦИЯ ==========
-const VK_APP_ID = 54576568; // ваш VK App ID
-const ADMIN_VK_IDS = [321451736]; // ID администраторов
-const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
-const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
+// ========== КОНФИГУРАЦИЯ (берём из глобальной области) ==========
+const API_URL = window.API_URL;
+const VK_APP_ID = window.VK_APP_ID;
+const ADMIN_VK_IDS = window.ADMIN_VK_IDS;
+const DRIVE_FOLDER_ID = window.DRIVE_FOLDER_ID;
 
 // ========== СОСТОЯНИЕ ==========
 const state = {
@@ -11,7 +11,7 @@ const state = {
   isAdmin: false,
   isLoading: true,
   tickets: [],
-  currentView: 'main', // 'login', 'main', 'form', 'admin'
+  currentView: 'login',   // 'login', 'main', 'form', 'admin'
   formData: { type: '', category: '', problem: '', printerName: '', requirements: '', location: '', date: '', time: '' },
   adminFilters: { searchQuery: '', type: '', status: '', priority: '' },
   activeTab: 'all',
@@ -46,9 +46,7 @@ async function getUserInfo(token) {
       method: 'users.get',
       params: { v: '5.131', access_token: token }
     });
-    if (data.response && data.response[0]) {
-      return data.response[0];
-    }
+    if (data.response && data.response[0]) return data.response[0];
   } catch (e) {
     console.error('getUserInfo error:', e);
   }
@@ -157,7 +155,7 @@ function render() {
   }
 }
 
-// ---------- ЭКРАН ВХОДА ----------
+// --- ЭКРАН ВХОДА ---
 function renderLogin() {
   app.innerHTML = `
     <div class="app login-page">
@@ -212,7 +210,7 @@ function handleManualLogin() {
   loadTickets().finally(() => { state.isLoading = false; render(); });
 }
 
-// ---------- ГЛАВНАЯ ----------
+// --- ГЛАВНАЯ ---
 function renderMain() {
   const u = state.userInfo;
   app.innerHTML = `
@@ -247,9 +245,8 @@ function backToMain() {
   render();
 }
 
-// ---------- ФОРМА ----------
+// --- ФОРМА ---
 function renderForm() {
-  const type = state.formData.type;
   app.innerHTML = `
     <div class="app">
       <header class="header">
@@ -257,7 +254,7 @@ function renderForm() {
         <h1>Новая заявка</h1>
       </header>
       <div class="form-container">
-        ${type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
+        ${state.formData.type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
       </div>
     </div>`;
   bindFormEvents();
@@ -300,7 +297,6 @@ function supportFormHTML() {
 }
 
 function bindFormEvents() {
-  // Небольшая задержка, чтобы DOM точно обновился
   requestAnimationFrame(() => {
     const catSelect = document.getElementById('category');
     if (catSelect) {
@@ -326,7 +322,6 @@ function bindFormEvents() {
         fileId: ''
       };
 
-      // Сбор данных формы
       if (type === 'maintenance') {
         ticket.category = document.getElementById('category')?.value || '';
         ticket.problem = document.getElementById('problem')?.value || '';
@@ -340,7 +335,6 @@ function bindFormEvents() {
         ticket.time = document.getElementById('time')?.value || '';
       }
 
-      // Если выбран файл – загружаем сначала его
       const fileInput = document.getElementById('attachmentFile');
       if (fileInput && fileInput.files.length > 0) {
         const uploadStatus = document.getElementById('uploadStatus');
@@ -365,7 +359,7 @@ function bindFormEvents() {
   });
 }
 
-// ---------- ВЫХОД ----------
+// --- ВЫХОД ---
 function handleLogout() {
   state.currentUser = null;
   state.userInfo = null;
@@ -375,7 +369,7 @@ function handleLogout() {
   render();
 }
 
-// ---------- АДМИНКА ----------
+// --- АДМИНКА ---
 function renderAdmin() {
   const stats = getStats();
   const filtered = getFilteredTickets();
