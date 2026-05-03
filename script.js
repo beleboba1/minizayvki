@@ -437,8 +437,8 @@ function renderAdmin() {
                   <td>${t.id}</td>
                   <td>${t.author}</td>
                   <td>${t.type}</td>
-                  <td><span class="status ${t.status.toLowerCase().replace(/ /g,'-')}">${t.status}</span></td>
-                  <td><span class="priority ${t.priority.toLowerCase()}">${t.priority}</span></td>
+                  <td><span class="status ${(t.status || '').toLowerCase().replace(/ /g,'-')}">${t.status || '—'}</span></td>
+                  <td><span class="priority ${(t.priority || '').toLowerCase()}">${t.priority || '—'}</span></td>
                   <td>${t.createdAt}</td>
                   <td><button class="view-btn" data-id="${t.id}">Просмотр</button></td>
                 </tr>`).join('')}
