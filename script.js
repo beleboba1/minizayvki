@@ -69,6 +69,81 @@ function finishLoading() {
   render();
 }
 
+// ========== VK BRIDGE (с защитой от зависаний) ==========
+async function safeVkBridgeCall(method, params, timeout = 10000) {
+  return new Promise(async (resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`VK Bridge call ${method} timed out`));
+    }, timeout);
+    try {
+      const result = await vkBridge.send(method, params);
+      clearTimeout(timer);
+      resolve(result);
+    } catch (e) {
+      clearTimeout(timer);
+      reject(e);
+    }
+  });
+}
+
+async function initVK() {
+  try {
+    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
+      app_id: VK_APP_ID,
+      scope: ''  // оставляем пустую строку, чтобы не запрашивать лишних разрешений
+    }, 10000);
+    if (authResult.access_token) {
+      const userInfo = await getUserInfo(authResult.access_token);
+      if (userInfo && userInfo.id) {
+        await handleAuthSuccess(userInfo.id, userInfo);
+        return;
+      }
+    }
+  } catch (e) {
+    console.error('Init error:', e);
+    state.error = 'Ошибка инициализации: ' + e.message;
+  }
+  finishLoading();
+}
+
+async function getUserInfo(token) {
+  try {
+    const data = await safeVkBridgeCall('VKWebAppCallAPIMethod', {
+      method: 'users.get',
+      params: { v: '5.131', access_token: token }
+    }, 7000);
+    if (data.response && data.response[0]) return data.response[0];
+  } catch (e) {
+    console.error('getUserInfo error:', e);
+  }
+  return null;
+}
+
+async function handleLogin() {
+  state.error = '';
+  state.isLoading = true; render();
+  try {
+    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
+      app_id: VK_APP_ID,
+      scope: ''
+    }, 10000);
+    if (authResult.access_token) {
+      const user = await getUserInfo(authResult.access_token);
+      if (user && user.id) {
+        await handleAuthSuccess(user.id, user);
+        return;
+      }
+    }
+    state.error = 'Не удалось получить данные пользователя';
+  } catch (e) {
+    state.error = 'Ошибка авторизации: ' + e.message;
+  }
+  state.isLoading = false;
+  render();
+}
+
 // ========== API (Google Sheets) ==========
 async function loadTickets() {
   try {
