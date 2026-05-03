@@ -98,17 +98,17 @@ async function getUserInfo(token) {
     const data = await vkBridge.send('VKWebAppCallAPIMethod', {
       method: 'users.get',
       params: {
-        user_ids: 'API',
-        fields: 'photo_100,first_name,last_name',
         v: '5.131',
         access_token: token
       }
     });
-    return data.response[0];
-  } catch {
-    // fallback
-    return { id: null, first_name: 'User', last_name: 'ID', photo_100: 'https://vk.com/images/camera_100.png' };
+    if (data.response && data.response[0]) {
+      return data.response[0];
+    }
+  } catch (e) {
+    console.error('getUserInfo error:', e);
   }
+  return null;
 }
 
 async function handleAuthSuccess(vkId, user, token) {
@@ -322,51 +322,45 @@ function supportFormHTML() {
     </div>`;
 }
 
-function bindFormEvents() {
-  const catSelect = document.getElementById('category');
-  if (catSelect) {
-    catSelect.addEventListener('change', (e) => {
-      document.getElementById('printerNameBlock').style.display = e.target.value === 'printer' ? 'block' : 'none';
-    });
+document.getElementById('submitBtn')?.addEventListener('click', async () => {
+  const type = state.formData.type;
+  const ticket = {
+    id: Math.floor(Math.random() * 100000),
+    type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
+    author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизвестный',
+    authorId: state.currentUser,
+    authorAvatar: state.userInfo?.photo_100 || '',
+    status: 'В ожидании',
+    priority: 'Средний',
+    createdAt: new Date().toLocaleString('ru-RU'),
+    completedAt: '',
+    timestamp: Date.now()
+  };
+
+  if (type === 'maintenance') {
+    const category = document.getElementById('category')?.value || '';
+    const problem = document.getElementById('problem')?.value || '';
+    ticket.category = category;
+    ticket.problem = problem;
+    if (category === 'printer') {
+      ticket.printerName = document.getElementById('printerName')?.value || '';
+    }
+  } else {
+    ticket.requirements = document.getElementById('requirements')?.value || '';
+    ticket.location = document.getElementById('location')?.value || '';
+    ticket.date = document.getElementById('date')?.value || '';
+    ticket.time = document.getElementById('time')?.value || '';
   }
 
-  document.getElementById('submitBtn')?.addEventListener('click', async () => {
-    const type = state.formData.type;
-    // Сбор данных
-    const ticket = {
-      id: Math.floor(Math.random() * 100000),
-      type: type === 'maintenance' ? 'Тех обслуживание' : 'Тех сопровождение',
-      author: state.userInfo ? `${state.userInfo.first_name} ${state.userInfo.last_name}` : 'Неизв.',
-      authorId: state.currentUser,
-      authorAvatar: state.userInfo?.photo_100 || '',
-      status: 'В ожидании',
-      priority: 'Средний',
-      createdAt: new Date().toLocaleString('ru-RU'),
-      completedAt: '',
-      timestamp: Date.now()
-    };
+  console.log('Отправляемый ticket:', ticket); // Временно для отладки
 
-    if (type === 'maintenance') {
-      ticket.category = document.getElementById('category').value;
-      ticket.problem = document.getElementById('problem').value;
-      if (ticket.category === 'printer') {
-        ticket.printerName = document.getElementById('printerName').value;
-      }
-    } else {
-      ticket.requirements = document.getElementById('requirements').value;
-      ticket.location = document.getElementById('location').value;
-      ticket.date = document.getElementById('date').value;
-      ticket.time = document.getElementById('time').value;
-    }
-
-    if (await createTicket(ticket)) {
-      alert('Заявка создана! Номер: ' + ticket.id);
-      backToMain();
-    } else {
-      alert('Ошибка создания заявки');
-    }
-  });
-}
+  if (await createTicket(ticket)) {
+    alert('Заявка создана! Номер: ' + ticket.id);
+    backToMain();
+  } else {
+    alert('Ошибка создания заявки');
+  }
+});
 
 function backToMain() {
   state.currentView = state.isAdmin ? 'admin' : 'main';
