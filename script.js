@@ -93,10 +93,12 @@ async function loadTickets() {
       method: 'POST',
       body: JSON.stringify({ action: 'getTickets' })
     });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
     if (Array.isArray(data)) state.tickets = data;
   } catch (e) {
     console.error('loadTickets error:', e);
+    state.error = 'Ошибка загрузки заявок';
   }
 }
 
@@ -328,7 +330,6 @@ function bindFormEvents() {
       const type = state.formData.type;
       const isMaintenance = type === 'maintenance';
 
-      // Собираем все поля единым объектом – так не будет undefined
       const ticket = {
         id: Math.floor(Math.random() * 100000),
         type: isMaintenance ? 'Тех обслуживание' : 'Тех сопровождение',
@@ -350,9 +351,8 @@ function bindFormEvents() {
         fileId: ''
       };
 
-      console.log('Отправляемая заявка:', JSON.stringify(ticket, null, 2)); // временно для отладки
+      console.log('Отправляемая заявка:', JSON.stringify(ticket, null, 2));
 
-      // Если выбран файл – загружаем сначала его
       const fileInput = document.getElementById('attachmentFile');
       if (fileInput && fileInput.files.length > 0) {
         const uploadStatus = document.getElementById('uploadStatus');
@@ -439,7 +439,7 @@ function renderAdmin() {
                   <td>${t.type || ''}</td>
                   <td><span class="status ${(t.status || '').toLowerCase().replace(/ /g,'-')}">${t.status || '—'}</span></td>
                   <td><span class="priority ${(t.priority || '').toLowerCase()}">${t.priority || '—'}</span></td>
-                  <td>${t.createdAt}</td>
+                  <td>${t.createdAt || ''}</td>
                   <td><button class="view-btn" data-id="${t.id}">Просмотр</button></td>
                 </tr>`).join('')}
             </tbody>
@@ -448,12 +448,14 @@ function renderAdmin() {
       </div>
     </div>`;
   bindAdminEvents();
-  // Восстанавливаем фокус на поле поиска после перерисовки
-  const searchInput = document.getElementById('searchInput');
-  if (searchInput && state.adminFilters.searchQuery) {
-    searchInput.focus();
-    searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
-  }
+  // Восстановление фокуса поиска
+  requestAnimationFrame(() => {
+    const searchInput = document.getElementById('searchInput');
+    if (searchInput && state.adminFilters.searchQuery) {
+      searchInput.focus();
+      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+    }
+  });
 }
 
 function bindAdminEvents() {
@@ -560,17 +562,19 @@ function getStats() {
   };
 }
 
-// ========== СТАРТ (с защитой от зависаний) ==========
+// ========== СТАРТ (надёжное восстановление) ==========
 function restoreSession() {
   const saved = localStorage.getItem('vk_data');
   if (saved) {
     try {
       const parsed = JSON.parse(saved);
-      state.currentUser = parsed.id;
-      state.userInfo = parsed.info;
-      state.isAdmin = parsed.admin;
-      state.currentView = parsed.admin ? 'admin' : 'main';
-      return true;
+      if (parsed.id && parsed.info && parsed.admin !== undefined) {
+        state.currentUser = parsed.id;
+        state.userInfo = parsed.info;
+        state.isAdmin = parsed.admin;
+        state.currentView = parsed.admin ? 'admin' : 'main';
+        return true;
+      }
     } catch(e) {}
   }
   return false;
@@ -583,13 +587,13 @@ function restoreSession() {
     try {
       await loadTickets();
     } catch (e) {
-      console.error('Не удалось загрузить заявки при старте:', e);
+      console.error('Ошибка при стартовой загрузке заявок:', e);
     } finally {
       finishLoading();
     }
   } else {
     state.isLoading = true;
     render();
-    await initVK(); // там всегда вызывается finishLoading
+    await initVK();
   }
 })();
