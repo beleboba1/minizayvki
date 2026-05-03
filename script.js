@@ -19,56 +19,6 @@ const state = {
   error: ''
 };
 
-// ========== VK BRIDGE ==========
-async function initVK() {
-  try {
-    await vkBridge.send('VKWebAppInit');
-    const authResult = await vkBridge.send('VKWebAppGetAuthToken', {
-      app_id: VK_APP_ID,
-      scope: 'friends,photos'
-    });
-    if (authResult.access_token) {
-      const userInfo = await getUserInfo(authResult.access_token);
-      if (userInfo && userInfo.id) {
-        await handleAuthSuccess(userInfo.id, userInfo);
-        return;
-      }
-    }
-  } catch (e) {
-    console.error('Init error:', e);
-  }
-  finishLoading();
-}
-
-async function getUserInfo(token) {
-  try {
-    const data = await vkBridge.send('VKWebAppCallAPIMethod', {
-      method: 'users.get',
-      params: { v: '5.131', access_token: token }
-    });
-    if (data.response && data.response[0]) return data.response[0];
-  } catch (e) {
-    console.error('getUserInfo error:', e);
-  }
-  return null;
-}
-
-async function handleAuthSuccess(userId, user) {
-  state.currentUser = userId;
-  state.userInfo = user;
-  state.isAdmin = ADMIN_VK_IDS.includes(userId);
-  state.currentView = state.isAdmin ? 'admin' : 'main';
-  localStorage.setItem('vk_data', JSON.stringify({ id: userId, info: user, admin: state.isAdmin }));
-  await loadTickets();
-  finishLoading();
-  render();
-}
-
-function finishLoading() {
-  state.isLoading = false;
-  render();
-}
-
 // ========== VK BRIDGE (с защитой от зависаний) ==========
 async function safeVkBridgeCall(method, params, timeout = 10000) {
   return new Promise(async (resolve, reject) => {
@@ -143,6 +93,7 @@ async function handleLogin() {
   state.isLoading = false;
   render();
 }
+
 
 // ========== API (Google Sheets) ==========
 async function loadTickets() {
