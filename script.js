@@ -1,5 +1,5 @@
 // ========== КОНФИГУРАЦИЯ ==========
-const VK_APP_ID = 54576043; // ваш VK App ID
+const VK_APP_ID = 54576568; // ваш VK App ID
 const ADMIN_VK_IDS = [321451736]; // ID администраторов
 const API_URL = 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec'; // замените
 const DRIVE_FOLDER_ID = '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L'; // опционально, для загрузки файлов
