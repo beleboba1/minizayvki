@@ -1,8 +1,9 @@
 // ========== КОНФИГУРАЦИЯ ==========
-const API_URL = window.API_URL || 'https://script.google.com/macros/s/AKfycbyy3AKVy1iZwTz3R4hr_4kprgBM6gMW_7_2V1yNRV68PnpVhetfmoTLLNvzszoSD2avzQ/exec';
-const VK_APP_ID = window.VK_APP_ID || 54576568;
-const ADMIN_VK_IDS = window.ADMIN_VK_IDS || [321451736];
-const DRIVE_FOLDER_ID = window.DRIVE_FOLDER_ID || '1FhV_8MF-XvRopll1d-50KN2PDpo8M6_L';
+const API_URL = window.API_URL;
+const VK_APP_ID = window.VK_APP_ID;
+const ADMIN_VK_IDS = window.ADMIN_VK_IDS;
+const DRIVE_FOLDER_ID = window.DRIVE_FOLDER_ID;
+const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 МБ
 
 // ========== СОСТОЯНИЕ ==========
 const state = {
@@ -19,49 +20,56 @@ const state = {
   error: ''
 };
 
-// ========== VK BRIDGE (с таймаутами) ==========
-async function safeVkBridgeCall(method, params, timeout = 10000) {
-  return new Promise(async (resolve, reject) => {
-    const timer = setTimeout(() => {
-      reject(new Error(`VK Bridge call ${method} timed out`));
-    }, timeout);
-    try {
-      const result = await vkBridge.send(method, params);
-      clearTimeout(timer);
-      resolve(result);
-    } catch (e) {
-      clearTimeout(timer);
-      reject(e);
-    }
-  });
-}
+// ========== БЕЗОПАСНАЯ РАБОТА С VK BRIDGE ==========
+const isBridgeAvailable = () => typeof vkBridge !== 'undefined';
 
+const safeVkBridgeCall = (method, params, timeout = 10000) => {
+  if (!isBridgeAvailable()) {
+    return Promise.reject(new Error('VK Bridge недоступен'));
+  }
+  return Promise.race([
+    vkBridge.send(method, params),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error(`VK Bridge ${method} timeout`)), timeout)
+    )
+  ]);
+};
+
+// ========== АВТОРИЗАЦИЯ ==========
 async function initVK() {
+  if (!isBridgeAvailable()) {
+    state.error = 'VK Bridge не найден. Используйте ручной вход.';
+    finishLoading();
+    return;
+  }
+
   try {
-    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    // Пытаемся инициализировать, но не критично, если не выйдет
+    await safeVkBridgeCall('VKWebAppInit', {}, 3000).catch(() => {});
     const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
       scope: ''
     }, 10000);
     if (authResult.access_token) {
-      const userInfo = await getUserInfo(authResult.access_token);
+      const userInfo = await getUserInfo();
       if (userInfo && userInfo.id) {
         await handleAuthSuccess(userInfo.id, userInfo);
         return;
       }
     }
+    state.error = 'Не удалось получить данные пользователя';
   } catch (e) {
-    console.error('Init error:', e);
-    state.error = 'Ошибка инициализации: ' + (e.message || 'неизвестная');
+    console.error('Ошибка авторизации VK:', e);
+    state.error = 'Ошибка авторизации. Попробуйте ручной вход.';
   }
   finishLoading();
 }
 
-async function getUserInfo(token) {
+async function getUserInfo() {
   try {
     const data = await safeVkBridgeCall('VKWebAppCallAPIMethod', {
       method: 'users.get',
-      params: { v: '5.131', access_token: token }
+      params: { v: '5.131' }
     }, 7000);
     if (data.response && data.response[0]) return data.response[0];
   } catch (e) {
@@ -75,10 +83,27 @@ async function handleAuthSuccess(userId, user) {
   state.userInfo = user;
   state.isAdmin = ADMIN_VK_IDS.includes(userId);
   state.currentView = state.isAdmin ? 'admin' : 'main';
-  localStorage.setItem('vk_data', JSON.stringify({ id: userId, info: user, admin: state.isAdmin }));
+  saveSession(userId, user);
   await loadTickets();
   finishLoading();
   render();
+}
+
+// Сохраняем минимум в localStorage, без флага admin
+function saveSession(userId, user) {
+  const session = {
+    id: userId,
+    info: {
+      first_name: user.first_name,
+      last_name: user.last_name,
+      photo_100: user.photo_100
+    }
+  };
+  try {
+    localStorage.setItem('vk_data', JSON.stringify(session));
+  } catch (e) {
+    console.warn('Не удалось сохранить сессию', e);
+  }
 }
 
 function finishLoading() {
@@ -95,10 +120,17 @@ async function loadTickets() {
     });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
-    if (Array.isArray(data)) state.tickets = data;
+    if (Array.isArray(data)) {
+      state.tickets = data;
+      state.error = '';
+    } else if (data.error) {
+      throw new Error(data.error);
+    } else {
+      throw new Error('Неизвестный ответ сервера');
+    }
   } catch (e) {
     console.error('loadTickets error:', e);
-    state.error = 'Ошибка загрузки заявок';
+    state.error = 'Ошибка загрузки заявок: ' + e.message;
   }
 }
 
@@ -109,9 +141,11 @@ async function createTicket(ticket) {
       body: JSON.stringify({ action: 'createTicket', ticket })
     });
     const data = await res.json();
-    return data.success;
+    if (!data.success) throw new Error(data.error || 'Ошибка создания');
+    return true;
   } catch (e) {
     console.error('createTicket error:', e);
+    state.error = 'Ошибка создания заявки: ' + e.message;
     return false;
   }
 }
@@ -123,17 +157,33 @@ async function updateTicket(ticketId, updates) {
       body: JSON.stringify({ action: 'updateTicket', ticketId, updates })
     });
     const data = await res.json();
-    if (data.success) await loadTickets();
+    if (data.success) {
+      await loadTickets();
+    } else {
+      throw new Error(data.error || 'Ошибка обновления');
+    }
   } catch (e) {
     console.error('updateTicket error:', e);
+    state.error = 'Ошибка обновления заявки: ' + e.message;
   }
 }
 
 async function uploadFile(file) {
+  if (file.size > MAX_FILE_SIZE) {
+    throw new Error(`Файл слишком большой. Максимум: ${MAX_FILE_SIZE / 1024 / 1024} МБ`);
+  }
+
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = async (e) => {
-      const base64 = e.target.result.split(',')[1];
+      let base64;
+      try {
+        base64 = e.target.result.split(',')[1];
+        if (!base64) throw new Error('Не удалось прочитать файл');
+      } catch (err) {
+        reject(err);
+        return;
+      }
       try {
         const res = await fetch(API_URL, {
           method: 'POST',
@@ -146,13 +196,16 @@ async function uploadFile(file) {
           })
         });
         const data = await res.json();
-        if (data.fileId) resolve(data.fileId);
-        else reject(new Error(data.error || 'Ошибка загрузки'));
+        if (data.fileId) {
+          resolve(data.fileId);
+        } else {
+          reject(new Error(data.error || 'Ошибка загрузки на сервер'));
+        }
       } catch (err) {
         reject(err);
       }
     };
-    reader.onerror = reject;
+    reader.onerror = () => reject(new Error('Ошибка чтения файла'));
     reader.readAsDataURL(file);
   });
 }
@@ -176,15 +229,17 @@ function render() {
 
 // ---------- ЭКРАН ВХОДА ----------
 function renderLogin() {
+  const vkAvailable = isBridgeAvailable();
   app.innerHTML = `
     <div class="app login-page">
       <div class="login-container">
         <div class="login-box">
           <h1>📋 Система заявок</h1>
           <p>Войдите через ВКонтакте</p>
-          ${state.error ? `<div class="error-message">${state.error}</div>` : ''}
-          <button class="vk-login-btn" onclick="handleLogin()">🔗 Войти через VK</button>
+          ${state.error ? `<div class="error-message">${escapeHtml(state.error)}</div>` : ''}
+          ${vkAvailable ? `<button class="vk-login-btn" onclick="handleLogin()">🔗 Войти через VK</button>` : ''}
           <button class="manual-login-btn" onclick="handleManualLogin()">📝 Ввести VK ID вручную</button>
+          ${!vkAvailable ? '<p style="margin-top:10px; color:#888">⚠️ VK Bridge недоступен в браузере — используйте ручной вход.</p>' : ''}
         </div>
       </div>
     </div>`;
@@ -194,13 +249,14 @@ async function handleLogin() {
   state.error = '';
   state.isLoading = true; render();
   try {
-    await safeVkBridgeCall('VKWebAppInit', {}, 5000);
+    if (!isBridgeAvailable()) throw new Error('VK Bridge недоступен');
+    await safeVkBridgeCall('VKWebAppInit', {}, 3000).catch(() => {});
     const authResult = await safeVkBridgeCall('VKWebAppGetAuthToken', {
       app_id: VK_APP_ID,
       scope: ''
     }, 10000);
     if (authResult.access_token) {
-      const user = await getUserInfo(authResult.access_token);
+      const user = await getUserInfo();
       if (user && user.id) {
         await handleAuthSuccess(user.id, user);
         return;
@@ -219,12 +275,17 @@ function handleManualLogin() {
   if (!vkId) return;
   const id = parseInt(vkId);
   if (isNaN(id)) return alert('Некорректный ID');
-  const user = { id, first_name: 'User', last_name: String(id), photo_100: 'https://vk.com/images/camera_100.png' };
+  const user = {
+    id,
+    first_name: 'User',
+    last_name: String(id),
+    photo_100: 'https://vk.com/images/camera_100.png'
+  };
   state.currentUser = id;
   state.userInfo = user;
   state.isAdmin = ADMIN_VK_IDS.includes(id);
   state.currentView = state.isAdmin ? 'admin' : 'main';
-  localStorage.setItem('vk_data', JSON.stringify({ id, info: user, admin: state.isAdmin }));
+  saveSession(id, user);
   state.isLoading = true; render();
   loadTickets().finally(() => { state.isLoading = false; render(); });
 }
@@ -237,11 +298,12 @@ function renderMain() {
       <header class="header">
         <h1>📋 Заявки</h1>
         <div class="user-info">
-          ${u && u.photo_100 ? `<img src="${u.photo_100}" class="user-avatar">` : ''}
-          <span>${u ? u.first_name + ' ' + u.last_name : ''}</span>
+          ${u && u.photo_100 ? `<img src="${escapeHtml(u.photo_100)}" class="user-avatar">` : ''}
+          <span>${escapeHtml(u ? u.first_name + ' ' + u.last_name : '')}</span>
           <button class="logout-btn" onclick="handleLogout()">Выход</button>
         </div>
       </header>
+      ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="main-content">
         <div class="ticket-blocks">
           <div class="ticket-block maintenance" onclick="openForm('maintenance')"><h2>🔧</h2><p>Тех обслуживание</p></div>
@@ -254,6 +316,7 @@ function renderMain() {
 function openForm(type) {
   state.formData.type = type;
   state.currentView = 'form';
+  state.error = '';
   render();
 }
 
@@ -261,6 +324,7 @@ function backToMain() {
   state.currentView = state.isAdmin ? 'admin' : 'main';
   state.selectedTicket = null;
   state.formData = { type: '', category: '', problem: '', printerName: '', requirements: '', location: '', date: '', time: '' };
+  state.error = '';
   render();
 }
 
@@ -273,6 +337,7 @@ function renderForm() {
         <button class="back-btn" onclick="backToMain()">← Назад</button>
         <h1>Новая заявка</h1>
       </header>
+      ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="form-container">
         ${type === 'maintenance' ? maintenanceFormHTML() : supportFormHTML()}
       </div>
@@ -351,8 +416,6 @@ function bindFormEvents() {
         fileId: ''
       };
 
-      console.log('Отправляемая заявка:', JSON.stringify(ticket, null, 2));
-
       const fileInput = document.getElementById('attachmentFile');
       if (fileInput && fileInput.files.length > 0) {
         const uploadStatus = document.getElementById('uploadStatus');
@@ -367,7 +430,8 @@ function bindFormEvents() {
         if (uploadStatus) uploadStatus.style.display = 'none';
       }
 
-      if (await createTicket(ticket)) {
+      const success = await createTicket(ticket);
+      if (success) {
         alert('Заявка №' + ticket.id + ' создана!');
         backToMain();
       } else {
@@ -383,6 +447,7 @@ function handleLogout() {
   state.userInfo = null;
   state.isAdmin = false;
   state.currentView = 'login';
+  state.error = '';
   localStorage.clear();
   render();
 }
@@ -396,10 +461,11 @@ function renderAdmin() {
       <header class="header">
         <h1>👨‍💼 Админ панель</h1>
         <div class="user-info">
-          ${state.userInfo && state.userInfo.photo_100 ? `<img src="${state.userInfo.photo_100}" class="user-avatar"><span>${state.userInfo.first_name || ''}</span>` : ''}
+          ${state.userInfo && state.userInfo.photo_100 ? `<img src="${escapeHtml(state.userInfo.photo_100)}" class="user-avatar"><span>${escapeHtml(state.userInfo.first_name || '')}</span>` : ''}
           <button class="logout-btn" onclick="handleLogout()">Выход</button>
         </div>
       </header>
+      ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="admin-panel">
         <div class="stats">
           <div class="stat-block"><h3>${stats.total}</h3><p>Всего</p></div>
@@ -408,7 +474,7 @@ function renderAdmin() {
           <div class="stat-block"><h3>${stats.completed}</h3><p>Выполнено</p></div>
         </div>
         <div class="filters">
-          <input type="text" id="searchInput" placeholder="Поиск" value="${state.adminFilters.searchQuery}">
+          <input type="text" id="searchInput" placeholder="Поиск" value="${escapeHtml(state.adminFilters.searchQuery)}">
           <select id="statusFilter">
             <option value="">Все статусы</option>
             <option value="В ожидании">В ожидании</option>
@@ -435,11 +501,11 @@ function renderAdmin() {
               ${filtered.map(t => `
                 <tr>
                   <td>${t.id || ''}</td>
-                  <td>${t.author || ''}</td>
-                  <td>${t.type || ''}</td>
-                  <td><span class="status ${(t.status || '').toLowerCase().replace(/ /g,'-')}">${t.status || '—'}</span></td>
-                  <td><span class="priority ${(t.priority || '').toLowerCase()}">${t.priority || '—'}</span></td>
-                  <td>${t.createdAt || ''}</td>
+                  <td>${escapeHtml(t.author || '')}</td>
+                  <td>${escapeHtml(t.type || '')}</td>
+                  <td><span class="status ${(t.status || '').toLowerCase().replace(/ /g,'-')}">${escapeHtml(t.status || '—')}</span></td>
+                  <td><span class="priority ${(t.priority || '').toLowerCase()}">${escapeHtml(t.priority || '—')}</span></td>
+                  <td>${escapeHtml(t.createdAt || '')}</td>
                   <td><button class="view-btn" data-id="${t.id}">Просмотр</button></td>
                 </tr>`).join('')}
             </tbody>
@@ -448,13 +514,24 @@ function renderAdmin() {
       </div>
     </div>`;
   bindAdminEvents();
-  // Восстановление фокуса поиска
   requestAnimationFrame(() => {
     const searchInput = document.getElementById('searchInput');
-    if (searchInput && state.adminFilters.searchQuery) {
+    if (searchInput) {
       searchInput.focus();
-      searchInput.setSelectionRange(searchInput.value.length, searchInput.value.length);
+      const len = searchInput.value.length;
+      searchInput.setSelectionRange(len, len);
     }
+  });
+}
+
+function escapeHtml(str) {
+  return String(str).replace(/[&<>"']/g, function(m) {
+    if (m === '&') return '&amp;';
+    if (m === '<') return '&lt;';
+    if (m === '>') return '&gt;';
+    if (m === '"') return '&quot;';
+    if (m === "'") return '&#039;';
+    return m;
   });
 }
 
@@ -496,17 +573,18 @@ function renderTicketDetail() {
   app.innerHTML = `
     <div class="app">
       <header class="header"><button class="back-btn" onclick="closeDetail()">← Назад</button><h1>Заявка №${t.id}</h1></header>
+      ${state.error ? `<div class="error-banner">${escapeHtml(state.error)}</div>` : ''}
       <div class="ticket-detail">
         <div class="ticket-info">
-          <h2>${t.type}</h2>
+          <h2>${escapeHtml(t.type)}</h2>
           <div class="user-card">
-            ${t.authorAvatar ? `<img src="${t.authorAvatar}" alt="user">` : ''}
-            <p><strong>От:</strong> ${t.author}</p>
+            ${t.authorAvatar ? `<img src="${escapeHtml(t.authorAvatar)}" alt="user">` : ''}
+            <p><strong>От:</strong> ${escapeHtml(t.author)}</p>
           </div>
-          <p><strong>Статус:</strong> ${t.status}</p>
-          <p><strong>Приоритет:</strong> ${t.priority}</p>
-          <p><strong>Создана:</strong> ${t.createdAt}</p>
-          ${t.completedAt ? `<p><strong>Выполнена:</strong> ${t.completedAt}</p>` : ''}
+          <p><strong>Статус:</strong> ${escapeHtml(t.status)}</p>
+          <p><strong>Приоритет:</strong> ${escapeHtml(t.priority)}</p>
+          <p><strong>Создана:</strong> ${escapeHtml(t.createdAt)}</p>
+          ${t.completedAt ? `<p><strong>Выполнена:</strong> ${escapeHtml(t.completedAt)}</p>` : ''}
           ${fileLink}
           <div class="update-section">
             <label>Статус:</label>
@@ -562,24 +640,25 @@ function getStats() {
   };
 }
 
-// ========== СТАРТ (надёжное восстановление) ==========
+// ========== ВОССТАНОВЛЕНИЕ СЕССИИ ==========
 function restoreSession() {
   const saved = localStorage.getItem('vk_data');
-  if (saved) {
-    try {
-      const parsed = JSON.parse(saved);
-      if (parsed.id && parsed.info && parsed.admin !== undefined) {
-        state.currentUser = parsed.id;
-        state.userInfo = parsed.info;
-        state.isAdmin = parsed.admin;
-        state.currentView = parsed.admin ? 'admin' : 'main';
-        return true;
-      }
-    } catch(e) {}
+  if (!saved) return false;
+  try {
+    const parsed = JSON.parse(saved);
+    if (!parsed.id || !parsed.info) return false;
+    state.currentUser = parsed.id;
+    state.userInfo = parsed.info;
+    state.isAdmin = ADMIN_VK_IDS.includes(parsed.id);
+    state.currentView = state.isAdmin ? 'admin' : 'main';
+    return true;
+  } catch (e) {
+    localStorage.removeItem('vk_data');
+    return false;
   }
-  return false;
 }
 
+// ========== СТАРТ ==========
 (async () => {
   if (restoreSession()) {
     state.isLoading = true;
@@ -587,7 +666,8 @@ function restoreSession() {
     try {
       await loadTickets();
     } catch (e) {
-      console.error('Ошибка при стартовой загрузке заявок:', e);
+      console.error('Ошибка загрузки заявок:', e);
+      state.error = 'Не удалось загрузить заявки';
     } finally {
       finishLoading();
     }
